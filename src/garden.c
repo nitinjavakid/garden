@@ -1,5 +1,5 @@
 #define F_CPU 14.7456E6
-#include <nlib/adc.h>
+#include <adc.h>
 #include <util/delay.h>
 
 int main()
@@ -12,7 +12,7 @@ int main()
     n_adc_set_ref(N_ADC_AVCC);
     DDRD = (1 << ledPin) | (1 << outPin1) | (1 << outPin2);
 
-    bool flip = true;
+    int flip = 0;
     while(1)
     {
         if(flip)
