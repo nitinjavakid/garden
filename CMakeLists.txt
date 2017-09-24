@@ -16,7 +16,6 @@ set(CMAKE_ASM_COMPILER ${AVRC})
 
 set(COPT "-Os")
 set(CMCU "-mmcu=${MCU}")
-
 set(CFLAGS   "${CMCU} ${COPT}")
 set(CXXFLAGS "${CMCU} ${COPT}")
 set(LDFLAGS  "${CMCU} ${COPT}")
@@ -30,7 +29,7 @@ set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 include_directories("${NLIB_PATH}/include")
 
-set(NLIB_MODULES "adc")
+set(NLIB_MODULES "adc" "usart" "delay")
 
 file(GLOB SRCS "src/*.c")
 
@@ -44,4 +43,11 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${PROJECT_NAME}.el
 
 add_custom_target(strip ALL ${AVRSTRIP} "${PROJECT_NAME}.elf" DEPENDS ${PROJECT_NAME})
 add_custom_target(hex   ALL ${OBJCOPY} -j .text -j .data -O ihex "${PROJECT_NAME}.elf" "${PROJECT_NAME}.hex" DEPENDS strip)
-add_custom_target(flash ${AVRDUDE} -p ${MCU} ${AVRDUDE_FLAGS} -U flash:w:${PROJECT_NAME}.hex DEPENDS hex)
+add_custom_target(flash ${AVRDUDE} -p ${MCU} \${AVRDUDE_FLAGS} -U flash:w:${PROJECT_NAME}.hex DEPENDS hex)
+add_custom_target(remote-flash
+  COMMAND
+    scp ${PROJECT_NAME}.hex \${REMOTE_HOST}:/tmp/flash.hex
+  COMMAND
+    ssh \${REMOTE_HOST} sudo ${AVRDUDE} -p ${MCU} \${AVRDUDE_FLAGS} -U flash:w:/tmp/flash.hex
+  DEPENDS hex)
+
