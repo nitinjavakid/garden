@@ -13,6 +13,12 @@ const int outPin1 = PD5;
 const int outPin2 = PD6;
 int flip = 0;
 
+#ifdef DEBUG
+#define DBGPRINT uprintf
+#else
+#define DBGPRINT(...) do { } while(0)
+#endif
+
 void uprintf(const char *fmt, ...)
 {
     char str[50];
@@ -49,7 +55,7 @@ void process()
         PORTD |= (1 << outPin1);
         PORTD &= ~(1 << outPin2);
         val = n_adc_read(N_ADC0);
-        uprintf("Debug: FLIP %d\r\n", val);
+        DBGPRINT("Debug: FLIP %d\r\n", val);
         if(val < 512)
         {
             waterPlant(flip, val);
@@ -60,17 +66,17 @@ void process()
         PORTD |= (1 << outPin2);
         PORTD &= ~(1 << outPin1);
         val = n_adc_read(N_ADC0);
-        uprintf("Debug: !FLIP %d\r\n", val);
+        DBGPRINT("Debug: !FLIP %d\r\n", val);
         if(val > 512)
         {
             waterPlant(flip, val);
         }
     }
 
-    uprintf("ADMUX = %d\r\n", ADMUX);
-    uprintf("ADCSRA = %d\r\n", ADCSRA);
-    uprintf("ADCSRB = %d\r\n", ADCSRB);
-    uprintf("PRR = %d\r\n", PRR);
+    DBGPRINT("ADMUX = %d\r\n", ADMUX);
+    DBGPRINT("ADCSRA = %d\r\n", ADCSRA);
+    DBGPRINT("ADCSRB = %d\r\n", ADCSRB);
+    DBGPRINT("PRR = %d\r\n", PRR);
 
     flip = !flip;
     PORTD &= ~(1 << ledPin);
@@ -88,6 +94,7 @@ int main()
     while(1)
     {
         process();
+        PORTD = 0;
         power_all_disable();
         n_delay_wait(8, N_DELAY_POWER_DOWN);
         power_all_enable();
