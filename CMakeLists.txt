@@ -14,7 +14,7 @@ set(CMAKE_CXX_COMPILER ${AVRCPP})
 set(CMAKE_C_COMPILER   ${AVRC})
 set(CMAKE_ASM_COMPILER ${AVRC})
 
-set(COPT "-Os")
+set(COPT "-Os ${COPT}")
 set(CMCU "-mmcu=${MCU}")
 set(CFLAGS   "${CMCU} ${COPT}")
 set(CXXFLAGS "${CMCU} ${COPT}")
