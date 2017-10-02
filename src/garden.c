@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <avr/power.h>
 #include <avr/interrupt.h>
+#include <util/delay.h>
 
 typedef char pin_t;
 
@@ -112,6 +113,42 @@ void setPin(pin_t pin, int val)
     }
 }
 
+int getPin(pin_t pin)
+{
+    int bit;
+    if(pin == -1)
+    {
+        return 0;
+    }
+
+    bit = (pin & 0xf);
+    switch(((pin & 0xf0) >> 4) + 'A')
+    {
+    case 'B':
+        return (PORTB & (0x1 << bit)) != 0 ? 1 : 0;
+        break;
+    case 'C':
+        return (PORTC & (0x1 << bit)) != 0 ? 1 : 0;
+        break;
+    case 'D':
+        return (PORTD & (0x1 << bit)) != 0 ? 1 : 0;
+        break;
+    }
+
+    return 0;
+}
+
+void freePlants()
+{
+    int idx = 0;
+    for(idx = 0; idx < noOfPlants; ++idx)
+    {
+        free(plants[idx].records);
+    }
+
+    free(plants);
+}
+
 /*
  * Configure from string, params are comma seperated
  * timestamp
@@ -131,6 +168,7 @@ void reconfigure(const char *string)
     char *nextptr = NULL;
     int idx = 0;
 
+    freePlants();
     DBGPRINT("Initializing with %s\r\n", string);
     if((nextptr = strchr(curptr, ',')) != NULL)
     {
@@ -194,6 +232,8 @@ void reconfigure(const char *string)
             curptr = nextptr + 1;
         }
     }
+
+    uprintf("DONE\r\n");
 
     free((char *)string);
 }
@@ -291,11 +331,13 @@ void dumpInfo()
         }
     }
 
+    uprintf("DONE\r\n");
     sei();
 }
 
 char recvBuffer[50];
 char recvBufferIdx = 0;
+volatile char commandSet = 0;
 
 ISR(USART_RX_vect)
 {
@@ -335,20 +377,51 @@ ISR(USART_RX_vect)
     recvBuffer[recvBufferIdx] = '\0';
 }
 
+void waitForCommand(int maxDelay)
+{
+    uprintf("\r\n> ");
+    commandSet = 0;
+    while((maxDelay > 0) && !commandSet)
+    {
+        maxDelay -= 8;
+        power_all_disable();
+        power_usart0_enable();
+        n_delay_wait(8, N_DELAY_IDLE);
+        power_all_enable();
+    }
+}
+
+ISR(INT0_vect, ISR_NOBLOCK)
+{
+    power_usart0_enable();
+    uprintf("\r\n> ");
+    _delay_ms(60000);
+    power_usart0_disable();
+}
+
 int main()
 {
     n_delay_init();
     n_usart_enable(N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
     n_usart_set_interrupt_flag(1, 0);
 
-    DBGPRINT("RESET\r\n");
+    uprintf("Booting up...\r\n");
+
     sei();
+
+    while(noOfPlants == 0)
+    {
+        waitForCommand(30);
+    }
+
+    EICRA = (0 << ISC01) | (1 << ISC00);
+    EIMSK = (1 << INT0);
+
     while(1)
     {
         process();
         power_all_disable();
-        power_usart0_enable();
-        n_delay_wait(delay, N_DELAY_IDLE);
+        n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
     }
 
