@@ -8,6 +8,10 @@
 #include <avr/power.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
+#include <wifi.h>
+#include <esp8266.h>
+#include <twi.h>
+#include <debug.h>
 
 typedef char pin_t;
 
@@ -27,37 +31,15 @@ typedef struct _plant {
     record_t *records;
 } plant_t;
 
-int          flip = 0;
-pin_t        ledPin;
-uint32_t     timestamp = 0;
-unsigned int delay = 8;
-int          noOfPlants = 0;
-plant_t      *plants = NULL;
-volatile uint32_t     counter = 0;
-
-#ifdef DEBUG
-#define DBGPRINT(fmt, ...) uprintf("DEBUG: " fmt, ##__VA_ARGS__)
-#else
-#define DBGPRINT(fmt, ...) do { } while(0)
-#endif
-
-void uprintf(const char *fmt, ...)
-{
-    char *str = NULL;
-    int len = 0;
-    int idx = 0;
-    va_list ap;
-    va_start(ap, fmt);
-    len = vsnprintf(NULL, 0, fmt, ap);
-    str = calloc(len + 1, 1);
-    len = vsnprintf(str, len + 1, fmt, ap);
-    va_end(ap);
-    for(idx = 0; idx < len + 1; ++idx)
-    {
-        n_usart_write(str[idx]);
-    }
-    free(str);
-}
+int               flip = 0;
+pin_t             ledPin;
+uint32_t          timestamp = 0;
+unsigned int      delay = 8;
+int               noOfPlants = 0;
+plant_t           *plants = NULL;
+volatile uint32_t counter = 0;
+n_io_handle_t     twi_handle = NULL;
+n_wifi_t          wifi_handle = NULL;
 
 pin_t atopin(const char *pin)
 {
@@ -169,7 +151,7 @@ void reconfigure(const char *string)
     int idx = 0;
 
     freePlants();
-    DBGPRINT("Initializing with %s\r\n", string);
+    N_DEBUG("Initializing with %s\r\n", string);
     if((nextptr = strchr(curptr, ',')) != NULL)
     {
         *nextptr = '\0';
@@ -233,7 +215,7 @@ void reconfigure(const char *string)
         }
     }
 
-    uprintf("DONE\r\n");
+    N_DEBUG("DONE");
 
     free((char *)string);
 }
@@ -241,7 +223,7 @@ void reconfigure(const char *string)
 void waterPlant(int idx)
 {
     cli();
-    DBGPRINT("Watering %d\r\n", idx);
+    N_DEBUG("Watering %d\r\n", idx);
     if(idx >= noOfPlants)
     {
         sei();
@@ -267,7 +249,7 @@ void processPlant(int idx)
         setPin(plants[idx].config.forwardPin, 1);
         setPin(plants[idx].config.reversePin, 0);
         val = n_adc_read(plants[idx].config.adcPin);
-        DBGPRINT("FLIP %d\r\n", val);
+        N_DEBUG("FLIP %d\r\n", val);
         if(val < 512)
         {
             waterPlant(idx);
@@ -278,19 +260,19 @@ void processPlant(int idx)
         setPin(plants[idx].config.reversePin, 1);
         setPin(plants[idx].config.forwardPin, 0);
         val = n_adc_read(plants[idx].config.adcPin);
-        DBGPRINT("!FLIP %d\r\n", val);
+        N_DEBUG("!FLIP %d\r\n", val);
         if(val > 512)
         {
             waterPlant(idx);
         }
     }
 
-    DBGPRINT("DDRD = %d\r\n", DDRD);
-    DBGPRINT("PORTD = %d\r\n", PORTD);
-    DBGPRINT("ADMUX = %d\r\n", ADMUX);
-    DBGPRINT("ADCSRA = %d\r\n", ADCSRA);
-    DBGPRINT("ADCSRB = %d\r\n", ADCSRB);
-    DBGPRINT("PRR = %d\r\n\r\n", PRR);
+    N_DEBUG("DDRD = %d\r\n", DDRD);
+    N_DEBUG("PORTD = %d\r\n", PORTD);
+    N_DEBUG("ADMUX = %d\r\n", ADMUX);
+    N_DEBUG("ADCSRA = %d\r\n", ADCSRA);
+    N_DEBUG("ADCSRB = %d\r\n", ADCSRB);
+    N_DEBUG("PRR = %d\r\n\r\n", PRR);
 
     setPin(plants[idx].config.forwardPin, 0);
     setPin(plants[idx].config.reversePin, 0);
@@ -321,94 +303,83 @@ void dumpInfo()
     int ridx = 0;
     cli();
 
-    uprintf("Plants %lu %d\r\n", timestamp, noOfPlants);
+    N_DEBUG("Plants %lu %d\r\n", timestamp, noOfPlants);
     for(idx = 0; idx < noOfPlants; ++idx)
     {
-        uprintf("Plant %d %d\r\n", idx, plants[idx].noOfRecords);
+        N_DEBUG("Plant %d %d\r\n", idx, plants[idx].noOfRecords);
         for(ridx = 0; ridx < plants[idx].noOfRecords; ++ridx)
         {
-            uprintf("%lu\r\n", ((uint32_t) plants[idx].records[ridx].time * delay) + timestamp);
+            N_DEBUG("%lu", ((uint32_t) plants[idx].records[ridx].time * delay) + timestamp);
         }
     }
 
-    uprintf("DONE\r\n");
+    N_DEBUG("DONE");
     sei();
 }
 
-char recvBuffer[50];
+char recvBuffer[100];
 char recvBufferIdx = 0;
 volatile char commandSet = 0;
 
-ISR(USART_RX_vect)
-{
-    int byte = n_usart_read();
-    n_usart_write(byte);
-
-    if(recvBufferIdx >= sizeof(recvBuffer))
-    {
-        recvBufferIdx = 0;
-    }
-
-    if(byte == ';')
-    {
-        uprintf("\r\n");
-        recvBuffer[recvBufferIdx] = '\0';
-        if(strncasecmp(recvBuffer, "init", 4) == 0)
-        {
-            reconfigure(recvBuffer + 5);
-        }
-        else if(strncasecmp(recvBuffer, "info", 4) == 0)
-        {
-            dumpInfo();
-        }
-
-        recvBufferIdx = 0;
-    }
-    else if(byte == '!')
-    {
-        uprintf("\r\n");
-        recvBufferIdx = 0;
-    }
-    else
-    {
-        recvBuffer[recvBufferIdx++] = byte;
-    }
-
-    recvBuffer[recvBufferIdx] = '\0';
-}
-
-void waitForCommand(int maxDelay)
-{
-    uprintf("\r\n> ");
-    commandSet = 0;
-    while((maxDelay > 0) && !commandSet)
-    {
-        maxDelay -= 8;
-        power_all_disable();
-        power_usart0_enable();
-        n_delay_wait(8, N_DELAY_IDLE);
-        power_all_enable();
-    }
-}
-
-ISR(INT0_vect, ISR_NOBLOCK)
-{
-    power_usart0_enable();
-    uprintf("\r\n> ");
-    _delay_ms(60000);
-    power_usart0_disable();
-}
-
 int main()
 {
-    n_delay_init();
-    n_usart_enable(N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
-    n_usart_set_interrupt_flag(1, 0);
+    char *line = NULL;
+    n_wifi_ap_node_t *nodes = NULL, *iter = NULL;
+    volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
 
-    uprintf("Booting up...\r\n");
+    twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
+    n_debug_init(twi_handle);
 
-    sei();
+    N_DEBUG("System booted");
 
+    n_delay_init(F_CPU);
+    n_usart_enable(N_USART_MODE_ASYNC, N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
+
+    usart_handle = n_usart_new_io(100);
+
+    N_DEBUG("UART enabled");
+
+    wifi_handle = n_esp8266_open_wifi(usart_handle);
+
+    N_DEBUG("ESP8266 enabled");
+
+    n_wifi_restart(wifi_handle);
+
+    N_DEBUG("ESP8266 restarted");
+
+    n_wifi_status(wifi_handle);
+
+    N_DEBUG("ESP8266 status ok");
+
+    n_wifi_set_mode(wifi_handle, N_WIFI_MODE_STA);
+
+    N_DEBUG("ESP8266 station mode set");
+
+    n_wifi_connect(wifi_handle, "linksys", "SanchezFan1987");
+
+    N_DEBUG("ESP8266 connected");
+
+    n_wifi_set_network(wifi_handle, "192.168.1.100", "192.168.1.2", "255.255.255.0");
+
+    N_DEBUG("ESP8266 ip set");
+
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 200);
+
+    N_DEBUG("ESP8266 connecting");
+    n_io_printf(tcp, "GET / HTTP/1.1\r\nHost: an.andnit.in\r\nConnection: close\r\n\r\n");
+
+    N_DEBUG("ESP8266 sent");
+
+    while((recvBufferIdx = n_io_read(tcp, recvBuffer, sizeof(recvBuffer) - 1)) > 0)
+    {
+        recvBuffer[recvBufferIdx] = '\0';
+        N_DEBUG("%s", recvBuffer, recvBufferIdx);
+    }
+
+    N_DEBUG("ESP8266 closed");
+
+    n_io_close(tcp);
+    /*
     while(noOfPlants == 0)
     {
         waitForCommand(30);
@@ -424,6 +395,7 @@ int main()
         n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
     }
+    */
 
     return 0;
 }

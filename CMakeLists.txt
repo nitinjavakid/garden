@@ -18,7 +18,7 @@ set(COPT "-Os ${COPT}")
 set(CMCU "-mmcu=${MCU}")
 set(CFLAGS   "${CMCU} ${COPT}")
 set(CXXFLAGS "${CMCU} ${COPT}")
-set(LDFLAGS  "${CMCU} ${COPT}")
+set(LD_FLAGS  "${CMCU} ${COPT}")
 
 set(CMAKE_C_FLAGS   "${CFLAGS}")
 set(CMAKE_CXX_FLAGS "${CXXFLAGS}")
@@ -29,7 +29,7 @@ set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 include_directories("${NLIB_PATH}/include")
 
-set(NLIB_MODULES "adc" "usart" "delay")
+set(NLIB_MODULES "adc" "usart" "delay" "io" "twi" "memory" "wifi" "esp8266" "debug")
 
 file(GLOB SRCS "src/*.c")
 
