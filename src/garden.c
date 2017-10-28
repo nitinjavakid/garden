@@ -12,6 +12,7 @@
 #include <esp8266.h>
 #include <twi.h>
 #include <debug.h>
+#include "config.h"
 
 typedef char pin_t;
 
@@ -355,11 +356,11 @@ int main()
 
     N_DEBUG("ESP8266 station mode set");
 
-    n_wifi_connect(wifi_handle, "linksys", "SanchezFan1987");
+    n_wifi_connect(wifi_handle, WIFI_SSID, WIFI_PASSWORD);
 
     N_DEBUG("ESP8266 connected");
 
-    n_wifi_set_network(wifi_handle, "192.168.1.100", "192.168.1.2", "255.255.255.0");
+    n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
 
     N_DEBUG("ESP8266 ip set");
 
