@@ -8,8 +8,6 @@
 #include <avr/power.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
-#include <wifi.h>
-#include <esp8266.h>
 #include <twi.h>
 #include <debug.h>
 #include "config.h"
@@ -39,8 +37,7 @@ unsigned int      delay = 8;
 int               noOfPlants = 0;
 plant_t           *plants = NULL;
 volatile uint32_t counter = 0;
-n_io_handle_t     twi_handle = NULL;
-n_wifi_t          wifi_handle = NULL;
+n_io_handle_t     usart_handle = NULL;
 
 pin_t atopin(const char *pin)
 {
@@ -142,6 +139,7 @@ void freePlants()
  *     forwardPin
  *     reversePin
  *     adcPin
+ * Example: 1,60,D7,1,D5,D6,C0
  */
 
 void reconfigure(const char *string)
@@ -304,87 +302,89 @@ void dumpInfo()
     int ridx = 0;
     cli();
 
-    N_DEBUG("Plants %lu %d\r\n", timestamp, noOfPlants);
+    n_io_printf(usart_handle, "\r\nPlants %lu %d\r\n", timestamp, noOfPlants);
     for(idx = 0; idx < noOfPlants; ++idx)
     {
-        N_DEBUG("Plant %d %d\r\n", idx, plants[idx].noOfRecords);
+        n_io_printf(usart_handle, "Plant %d %d\r\n", idx, plants[idx].noOfRecords);
         for(ridx = 0; ridx < plants[idx].noOfRecords; ++ridx)
         {
-            N_DEBUG("%lu", ((uint32_t) plants[idx].records[ridx].time * delay) + timestamp);
+            n_io_printf(usart_handle, "%lu\r\n", ((uint32_t) plants[idx].records[ridx].time * delay) + timestamp);
         }
     }
 
-    N_DEBUG("DONE");
+    n_io_printf(usart_handle, "DONE\r\n");
     sei();
 }
 
-char recvBuffer[100];
-char recvBufferIdx = 0;
-volatile char commandSet = 0;
+ISR(INT0_vect, ISR_NOBLOCK)
+{
+    char *command = NULL;
+    power_usart0_enable();
+    n_io_printf(usart_handle, "\r\n> ");
+
+    while(!n_io_available(usart_handle))
+    {
+        n_delay_sleep(N_DELAY_IDLE);
+    }
+
+    while(1)
+    {
+        int idx;
+        command = n_io_readline(usart_handle, NULL, 0);
+        idx = strlen(command) - 1;
+        if(command[idx] != '!')
+        {
+            break;
+        }
+
+        free(command);
+    }
+
+    if(strncasecmp(command, "init,", 5) == 0)
+    {
+        reconfigure(command + 6);
+    }
+    else if(strncasecmp(command, "info", 4) == 0)
+    {
+        dumpInfo();
+    }
+    free(command);
+    n_delay_loop(100);
+    power_usart0_disable();
+}
 
 int main()
 {
     char *line = NULL;
-    n_wifi_ap_node_t *nodes = NULL, *iter = NULL;
-    volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
-
-    twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
-    n_debug_init(twi_handle);
-
-    N_DEBUG("System booted");
-
-    n_delay_init(F_CPU);
+    n_io_handle_t twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
     n_usart_enable(N_USART_MODE_ASYNC, N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
-
     usart_handle = n_usart_new_io(100);
 
-    N_DEBUG("UART enabled");
+    n_debug_init(twi_handle);
+    N_DEBUG("\r\nSystem booted");
 
-    wifi_handle = n_esp8266_open_wifi(usart_handle);
-
-    N_DEBUG("ESP8266 enabled");
-
-    n_wifi_restart(wifi_handle);
-
-    N_DEBUG("ESP8266 restarted");
-
-    n_wifi_status(wifi_handle);
-
-    N_DEBUG("ESP8266 status ok");
-
-    n_wifi_set_mode(wifi_handle, N_WIFI_MODE_STA);
-
-    N_DEBUG("ESP8266 station mode set");
-
-    n_wifi_connect(wifi_handle, WIFI_SSID, WIFI_PASSWORD);
-
-    N_DEBUG("ESP8266 connected");
-
-    n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
-
-    N_DEBUG("ESP8266 ip set");
-
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 200);
-
-    N_DEBUG("ESP8266 connecting");
-    n_io_printf(tcp, "GET / HTTP/1.1\r\nHost: an.andnit.in\r\nConnection: close\r\n\r\n");
-
-    N_DEBUG("ESP8266 sent");
-
-    while((recvBufferIdx = n_io_read(tcp, recvBuffer, sizeof(recvBuffer) - 1)) > 0)
+    while(1)
     {
-        recvBuffer[recvBufferIdx] = '\0';
-        N_DEBUG("%s", recvBuffer, recvBufferIdx);
+        int idx;
+        n_io_printf(usart_handle, "\r\ninit> ");
+        line = n_io_readline(usart_handle, NULL, 0);
+        idx = strlen(line) - 1;
+        while((line[idx] == '\r') || (line[idx] == '\n'))
+        {
+            --idx;
+        }
+
+        if(line[idx] != '!')
+        {
+            reconfigure(line);
+            free(line);
+            break;
+        }
+
+        free(line);
     }
 
-    N_DEBUG("ESP8266 closed");
-
-    n_io_close(tcp);
-    /*
-    while(noOfPlants == 0)
-    {
-        waitForCommand(30);
-    }
+    n_delay_init(F_CPU);
 
     EICRA = (0 << ISC01) | (1 << ISC00);
     EIMSK = (1 << INT0);
@@ -396,7 +396,6 @@ int main()
         n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
     }
-    */
 
     return 0;
 }

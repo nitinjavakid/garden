@@ -29,7 +29,7 @@ set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 include_directories("${NLIB_PATH}/include")
 
-set(NLIB_MODULES "adc" "usart" "delay" "io" "twi" "memory" "wifi" "esp8266" "debug")
+set(NLIB_MODULES "adc" "usart" "delay" "debug" "io" "twi" "memory")
 
 file(GLOB SRCS "src/*.c")
 
