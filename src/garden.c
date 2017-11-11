@@ -334,6 +334,9 @@ int main()
     N_DEBUG("System booted");
 
     n_delay_init(F_CPU);
+
+    n_delay_loop(10000);
+
     n_usart_enable(N_USART_MODE_ASYNC, N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
 
     usart_handle = n_usart_new_io(100);
