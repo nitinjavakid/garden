@@ -12,6 +12,7 @@
 #include <esp8266.h>
 #include <twi.h>
 #include <debug.h>
+#include <http.h>
 #include "config.h"
 
 typedef char pin_t;
@@ -318,15 +319,14 @@ void dumpInfo()
     sei();
 }
 
-char recvBuffer[100];
-char recvBufferIdx = 0;
-volatile char commandSet = 0;
-
 int main()
 {
     char *line = NULL;
+    int i;
     n_wifi_ap_node_t *nodes = NULL, *iter = NULL;
     volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
+    n_http_request_t request = NULL;
+    n_http_response_t response = NULL;
 
     twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
     n_debug_init(twi_handle);
@@ -366,23 +366,42 @@ int main()
     n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
 
     N_DEBUG("ESP8266 ip set");
-
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 200);
-
-    N_DEBUG("ESP8266 connecting");
-    n_io_printf(tcp, "GET / HTTP/1.1\r\nHost: an.andnit.in\r\nConnection: close\r\n\r\n");
-
-    N_DEBUG("ESP8266 sent");
-
-    while((recvBufferIdx = n_io_read(tcp, recvBuffer, sizeof(recvBuffer) - 1)) > 0)
+    for(i = 0; i < 10; ++i)
     {
-        recvBuffer[recvBufferIdx] = '\0';
-        N_DEBUG("%s", recvBuffer, recvBufferIdx);
+        N_DEBUG("Trying to connect");
+        tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 200);
+        if(tcp == NULL)
+        {
+            N_DEBUG("Unable to open connection");
+            return 0;
+        }
+
+        N_DEBUG("ESP8266 connecting");
+
+        request = n_http_new_request();
+        if(request == NULL)
+        {
+            N_DEBUG("Unable to allocate request");
+        }
+
+        n_http_request_set_uri(request, "/");
+        n_http_request_set_method(request, "GET");
+        n_http_set_header(request, "Host", "an.andnit.in");
+        n_http_set_header(request, "Connection", "close");
+
+        n_http_request_write_to_stream(request, tcp);
+        n_http_destroy(request);
+
+        N_DEBUG("ESP8266 sent");
+
+        response = n_http_new_response();
+        n_http_response_read_from_stream(response, tcp);
+        N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
+        n_http_destroy(response);
+        n_io_close(tcp);
+        N_DEBUG("ESP8266 closed");
     }
 
-    N_DEBUG("ESP8266 closed");
-
-    n_io_close(tcp);
     /*
     while(noOfPlants == 0)
     {
