@@ -390,14 +390,15 @@ int main()
         n_http_set_header(request, "Connection", "close");
 
         n_http_request_write_to_stream(request, tcp);
-        n_http_destroy(request);
+        n_http_free_object(request);
 
         N_DEBUG("ESP8266 sent");
 
         response = n_http_new_response();
+        n_http_set_header(response, "Content-Length", NULL);
         n_http_response_read_from_stream(response, tcp);
         N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
-        n_http_destroy(response);
+        n_http_free_object(response);
         n_io_close(tcp);
         N_DEBUG("ESP8266 closed");
     }
