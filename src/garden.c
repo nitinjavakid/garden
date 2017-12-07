@@ -13,6 +13,7 @@
 #include <twi.h>
 #include <debug.h>
 #include <http.h>
+#include <stdio.h>
 #include "config.h"
 
 typedef char pin_t;
@@ -224,21 +225,116 @@ void reconfigure(const char *string)
 
 void waterPlant(int idx)
 {
-    cli();
-    N_DEBUG("Watering %d\r\n", idx);
-    if(idx >= noOfPlants)
+    N_DEBUG("Trying to connect");
+    n_io_handle_t tcp = NULL;
+    n_http_request_t request = NULL;
+    n_http_response_t response = NULL;
+    char data[20];
+    char len[4];
+
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 100);
+    if(tcp == NULL)
     {
-        sei();
+        N_DEBUG("Unable to open connection");
         return;
     }
 
-    volatile plant_t *plant = &plants[idx];
-    plant->records = realloc(plant->records,
-                             (plant->noOfRecords + 1) * sizeof(record_t));
+    N_DEBUG("ESP8266 connecting");
 
-    plant->records[plant->noOfRecords++].time = counter;
+    request = n_http_new_request();
+    if(request == NULL)
+    {
+        N_DEBUG("Unable to allocate request");
+        n_io_close(tcp);
+        return;
+    }
 
-    sei();
+    n_http_request_set_uri(request, "/record.php");
+    n_http_request_set_method(request, "POST");
+    n_http_set_header(request, "Host", "an.andnit.in");
+    n_http_set_header(request, "Connection", "close");
+    n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
+    snprintf(data, sizeof(data) - 1, "i=%d", idx);
+    snprintf(len, sizeof(len), "%d", strlen(data));
+    n_http_set_header(request, "Content-Length", len);
+
+    n_http_request_write_to_stream(request, tcp);
+    n_http_free_object(request);
+
+    n_io_printf(tcp, "%s", data);
+
+    N_DEBUG("ESP8266 sent");
+
+    response = n_http_new_response();
+    if(response == NULL)
+    {
+        n_io_close(tcp);
+        return;
+    }
+    n_http_set_header(response, "Content-Length", NULL);
+    N_DEBUG("Reading response");
+    n_http_response_read_from_stream(response, tcp);
+    N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
+    n_http_free_object(response);
+    n_io_close(tcp);
+    N_DEBUG("ESP8266 closed");
+
+}
+
+void recordPlant(int idx, int val, int flip)
+{
+    N_DEBUG("Trying to connect");
+    char data[20];
+    char len[4];
+    n_io_handle_t tcp = NULL;
+    n_http_request_t request = NULL;
+    n_http_response_t response = NULL;
+
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 100);
+    if(tcp == NULL)
+    {
+        N_DEBUG("Unable to open connection");
+        return;
+    }
+
+    N_DEBUG("ESP8266 connecting");
+
+    request = n_http_new_request();
+    if(request == NULL)
+    {
+        N_DEBUG("Unable to allocate request");
+        n_io_close(tcp);
+        return;
+    }
+
+    snprintf(data, sizeof(data) - 1, "i=%d&v=%d&f=%d", idx, val, flip);
+
+    n_http_request_set_uri(request, "/record.php");
+    n_http_request_set_method(request, "POST");
+    n_http_set_header(request, "Host", "an.andnit.in");
+    n_http_set_header(request, "Connection", "close");
+    n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
+    snprintf(len, sizeof(len), "%d", strlen(data));
+    n_http_set_header(request, "Content-Length", len);
+
+    n_http_request_write_to_stream(request, tcp);
+    n_http_free_object(request);
+
+    n_io_printf(tcp, "%s", data);
+    N_DEBUG("ESP8266 sent");
+
+    response = n_http_new_response();
+    if(response == NULL)
+    {
+        n_io_close(tcp);
+        return;
+    }
+    n_http_set_header(response, "Content-Length", NULL);
+    n_http_response_read_from_stream(response, tcp);
+    N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
+    n_http_free_object(response);
+    n_io_close(tcp);
+    N_DEBUG("ESP8266 closed");
 }
 
 void processPlant(int idx)
@@ -251,7 +347,6 @@ void processPlant(int idx)
         setPin(plants[idx].config.forwardPin, 1);
         setPin(plants[idx].config.reversePin, 0);
         val = n_adc_read(plants[idx].config.adcPin);
-        N_DEBUG("FLIP %d\r\n", val);
         if(val < 512)
         {
             waterPlant(idx);
@@ -262,19 +357,13 @@ void processPlant(int idx)
         setPin(plants[idx].config.reversePin, 1);
         setPin(plants[idx].config.forwardPin, 0);
         val = n_adc_read(plants[idx].config.adcPin);
-        N_DEBUG("!FLIP %d\r\n", val);
         if(val > 512)
         {
             waterPlant(idx);
         }
     }
 
-    N_DEBUG("DDRD = %d\r\n", DDRD);
-    N_DEBUG("PORTD = %d\r\n", PORTD);
-    N_DEBUG("ADMUX = %d\r\n", ADMUX);
-    N_DEBUG("ADCSRA = %d\r\n", ADCSRA);
-    N_DEBUG("ADCSRB = %d\r\n", ADCSRB);
-    N_DEBUG("PRR = %d\r\n\r\n", PRR);
+    recordPlant(idx, val, flip);
 
     setPin(plants[idx].config.forwardPin, 0);
     setPin(plants[idx].config.reversePin, 0);
@@ -325,8 +414,6 @@ int main()
     int i;
     n_wifi_ap_node_t *nodes = NULL, *iter = NULL;
     volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
-    n_http_request_t request = NULL;
-    n_http_response_t response = NULL;
 
     twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
     n_debug_init(twi_handle);
@@ -365,52 +452,9 @@ int main()
 
     n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
 
-    N_DEBUG("ESP8266 ip set");
-    for(i = 0; i < 10; ++i)
-    {
-        N_DEBUG("Trying to connect");
-        tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 200);
-        if(tcp == NULL)
-        {
-            N_DEBUG("Unable to open connection");
-            return 0;
-        }
+    N_DEBUG("ESP8266 network setup done");
 
-        N_DEBUG("ESP8266 connecting");
-
-        request = n_http_new_request();
-        if(request == NULL)
-        {
-            N_DEBUG("Unable to allocate request");
-        }
-
-        n_http_request_set_uri(request, "/");
-        n_http_request_set_method(request, "GET");
-        n_http_set_header(request, "Host", "an.andnit.in");
-        n_http_set_header(request, "Connection", "close");
-
-        n_http_request_write_to_stream(request, tcp);
-        n_http_free_object(request);
-
-        N_DEBUG("ESP8266 sent");
-
-        response = n_http_new_response();
-        n_http_set_header(response, "Content-Length", NULL);
-        n_http_response_read_from_stream(response, tcp);
-        N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
-        n_http_free_object(response);
-        n_io_close(tcp);
-        N_DEBUG("ESP8266 closed");
-    }
-
-    /*
-    while(noOfPlants == 0)
-    {
-        waitForCommand(30);
-    }
-
-    EICRA = (0 << ISC01) | (1 << ISC00);
-    EIMSK = (1 << INT0);
+    reconfigure("1,60,D7,1,D5,D6,C0");
 
     while(1)
     {
@@ -419,7 +463,6 @@ int main()
         n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
     }
-    */
 
     return 0;
 }
