@@ -254,7 +254,7 @@ void waterPlant(int idx)
     n_http_set_header(request, "Host", "an.andnit.in");
     n_http_set_header(request, "Connection", "close");
     n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(data, sizeof(data) - 1, "i=%d", idx);
+    snprintf(data, sizeof(data), "i=%d", idx);
     snprintf(len, sizeof(len), "%d", strlen(data));
     n_http_set_header(request, "Content-Length", len);
 
@@ -271,7 +271,7 @@ void waterPlant(int idx)
         n_io_close(tcp);
         return;
     }
-    n_http_set_header(response, "Content-Length", NULL);
+    n_http_set_header(response, "Content-Length", "0");
     N_DEBUG("Reading response");
     n_http_response_read_from_stream(response, tcp);
     N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
@@ -307,7 +307,7 @@ void recordPlant(int idx, int val, int flip)
         return;
     }
 
-    snprintf(data, sizeof(data) - 1, "i=%d&v=%d&f=%d", idx, val, flip);
+    snprintf(data, sizeof(data), "i=%d&v=%d&f=%d", idx, val, flip);
 
     n_http_request_set_uri(request, "/record.php");
     n_http_request_set_method(request, "POST");
@@ -329,7 +329,7 @@ void recordPlant(int idx, int val, int flip)
         n_io_close(tcp);
         return;
     }
-    n_http_set_header(response, "Content-Length", NULL);
+    n_http_set_header(response, "Content-Length", "0");
     n_http_response_read_from_stream(response, tcp);
     N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
     n_http_free_object(response);
