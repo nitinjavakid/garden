@@ -229,10 +229,10 @@ void waterPlant(int idx)
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
-    char data[20];
-    char len[4];
+    char data[30];
+    char len[10];
 
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 100);
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, 80, 100);
     if(tcp == NULL)
     {
         N_DEBUG("Unable to open connection");
@@ -251,11 +251,11 @@ void waterPlant(int idx)
 
     n_http_request_set_uri(request, "/record.php");
     n_http_request_set_method(request, "POST");
-    n_http_set_header(request, "Host", "an.andnit.in");
+    n_http_set_header(request, "Host", HOSTNAME);
     n_http_set_header(request, "Connection", "close");
     n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(data, sizeof(data), "i=%d", idx);
-    snprintf(len, sizeof(len), "%d", strlen(data));
+    snprintf(data, sizeof(data), "i=%d", (int)idx);
+    snprintf(len, sizeof(len), "%d", (int)strlen(data));
     n_http_set_header(request, "Content-Length", len);
 
     n_http_request_write_to_stream(request, tcp);
@@ -284,13 +284,13 @@ void waterPlant(int idx)
 void recordPlant(int idx, int val, int flip)
 {
     N_DEBUG("Trying to connect");
-    char data[20];
-    char len[4];
+    char data[30];
+    char len[10];
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
 
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, "an.andnit.in", 80, 100);
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, 80, 100);
     if(tcp == NULL)
     {
         N_DEBUG("Unable to open connection");
@@ -307,17 +307,18 @@ void recordPlant(int idx, int val, int flip)
         return;
     }
 
-    snprintf(data, sizeof(data), "i=%d&v=%d&f=%d", idx, val, flip);
+    snprintf(data, sizeof(data), "i=%d&v=%d&f=%d", (int)idx, (int)val, (int)flip);
 
     n_http_request_set_uri(request, "/record.php");
     n_http_request_set_method(request, "POST");
-    n_http_set_header(request, "Host", "an.andnit.in");
+    n_http_set_header(request, "Host", HOSTNAME);
     n_http_set_header(request, "Connection", "close");
     n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(len, sizeof(len), "%d", strlen(data));
+    snprintf(len, sizeof(len), "%d", (int)strlen(data));
     n_http_set_header(request, "Content-Length", len);
 
     n_http_request_write_to_stream(request, tcp);
+
     n_http_free_object(request);
 
     n_io_printf(tcp, "%s", data);
@@ -329,6 +330,7 @@ void recordPlant(int idx, int val, int flip)
         n_io_close(tcp);
         return;
     }
+
     n_http_set_header(response, "Content-Length", "0");
     n_http_response_read_from_stream(response, tcp);
     N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
@@ -416,7 +418,10 @@ int main()
     volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
 
     twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
-    n_debug_init(twi_handle);
+    if(twi_handle != NULL)
+    {
+        n_debug_init(twi_handle);
+    }
 
     N_DEBUG("System booted");
 
