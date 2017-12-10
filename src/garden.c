@@ -223,14 +223,13 @@ void reconfigure(const char *string)
     free((char *)string);
 }
 
-void waterPlant(int idx)
+void doPost(const char *data, size_t size)
 {
     N_DEBUG("Trying to connect");
+    char len[10];
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
-    char data[30];
-    char len[10];
 
     tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, 80, 100);
     if(tcp == NULL)
@@ -254,15 +253,14 @@ void waterPlant(int idx)
     n_http_set_header(request, "Host", HOSTNAME);
     n_http_set_header(request, "Connection", "close");
     n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(data, sizeof(data), "i=%d", (int)idx);
-    snprintf(len, sizeof(len), "%d", (int)strlen(data));
+    snprintf(len, sizeof(len), "%d", (int)size);
     n_http_set_header(request, "Content-Length", len);
 
     n_http_request_write_to_stream(request, tcp);
+
     n_http_free_object(request);
 
-    n_io_printf(tcp, "%s", data);
-
+    n_io_write(tcp, data, size);
     N_DEBUG("ESP8266 sent");
 
     response = n_http_new_response();
@@ -271,72 +269,27 @@ void waterPlant(int idx)
         n_io_close(tcp);
         return;
     }
+
     n_http_set_header(response, "Content-Length", "0");
-    N_DEBUG("Reading response");
     n_http_response_read_from_stream(response, tcp);
     N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
     n_http_free_object(response);
     n_io_close(tcp);
     N_DEBUG("ESP8266 closed");
+}
 
+void waterPlant(int idx)
+{
+    char data[30];
+    snprintf(data, sizeof(data), "i=%d", (int)idx);
+    doPost(data, strlen(data));
 }
 
 void recordPlant(int idx, int val, int flip)
 {
-    N_DEBUG("Trying to connect");
     char data[30];
-    char len[10];
-    n_io_handle_t tcp = NULL;
-    n_http_request_t request = NULL;
-    n_http_response_t response = NULL;
-
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, 80, 100);
-    if(tcp == NULL)
-    {
-        N_DEBUG("Unable to open connection");
-        return;
-    }
-
-    N_DEBUG("ESP8266 connecting");
-
-    request = n_http_new_request();
-    if(request == NULL)
-    {
-        N_DEBUG("Unable to allocate request");
-        n_io_close(tcp);
-        return;
-    }
-
     snprintf(data, sizeof(data), "i=%d&v=%d&f=%d", (int)idx, (int)val, (int)flip);
-
-    n_http_request_set_uri(request, "/record.php");
-    n_http_request_set_method(request, "POST");
-    n_http_set_header(request, "Host", HOSTNAME);
-    n_http_set_header(request, "Connection", "close");
-    n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(len, sizeof(len), "%d", (int)strlen(data));
-    n_http_set_header(request, "Content-Length", len);
-
-    n_http_request_write_to_stream(request, tcp);
-
-    n_http_free_object(request);
-
-    n_io_printf(tcp, "%s", data);
-    N_DEBUG("ESP8266 sent");
-
-    response = n_http_new_response();
-    if(response == NULL)
-    {
-        n_io_close(tcp);
-        return;
-    }
-
-    n_http_set_header(response, "Content-Length", "0");
-    n_http_response_read_from_stream(response, tcp);
-    N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
-    n_http_free_object(response);
-    n_io_close(tcp);
-    N_DEBUG("ESP8266 closed");
+    doPost(data, strlen(data));
 }
 
 void processPlant(int idx)
@@ -374,8 +327,6 @@ void processPlant(int idx)
 void process()
 {
     int idx = 0;
-    setDirection(ledPin, 1);
-    setPin(ledPin, 1);
 
     counter++;
     n_adc_set_ref(N_ADC_AVCC);
@@ -387,7 +338,6 @@ void process()
     }
 
     flip = !flip;
-    setPin(ledPin, 0);
 }
 
 void dumpInfo()
@@ -410,24 +360,15 @@ void dumpInfo()
     sei();
 }
 
-int main()
+volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
+
+void enable_esp()
 {
-    char *line = NULL;
-    int i;
-    n_wifi_ap_node_t *nodes = NULL, *iter = NULL;
-    volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
+    N_DEBUG("ESP Enabled");
+    setDirection(ledPin, 1);
+    setPin(ledPin, 1);
 
-    twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
-    if(twi_handle != NULL)
-    {
-        n_debug_init(twi_handle);
-    }
-
-    N_DEBUG("System booted");
-
-    n_delay_init(F_CPU);
-
-    n_delay_loop(10000);
+    n_delay_loop(5000);
 
     n_usart_enable(N_USART_MODE_ASYNC, N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
 
@@ -458,12 +399,36 @@ int main()
     n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
 
     N_DEBUG("ESP8266 network setup done");
+}
 
-    reconfigure("1,60,D7,1,D5,D6,C0");
+void disable_esp()
+{
+    n_wifi_close(wifi_handle);
+    n_io_close(usart_handle);
+    setDirection(ledPin, 1);
+    setPin(ledPin, 0);
+    N_DEBUG("ESP Disabled");
+}
+
+int main()
+{
+    twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
+    if(twi_handle != NULL)
+    {
+        n_debug_init(twi_handle);
+    }
+
+    N_DEBUG("System booted");
+
+    n_delay_init(F_CPU);
+
+    reconfigure(CONFIG_STR);
 
     while(1)
     {
+        enable_esp();
         process();
+        disable_esp();
         power_all_disable();
         n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
