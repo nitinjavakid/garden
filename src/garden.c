@@ -18,31 +18,22 @@
 
 typedef char pin_t;
 
-typedef struct _record {
-    int time;
-} record_t;
-
-typedef struct _config {
+typedef struct _plant {
+    uint32_t index;
     pin_t forwardPin;
     pin_t reversePin;
     pin_t adcPin;
-} config_t;
-
-typedef struct _plant {
-    config_t  config;
-    int       noOfRecords;
-    record_t *records;
 } plant_t;
 
 int               flip = 0;
-pin_t             ledPin;
-uint32_t          timestamp = 0;
-unsigned int      delay = 8;
+pin_t             esp8266pin;
 int               noOfPlants = 0;
 plant_t           *plants = NULL;
-volatile uint32_t counter = 0;
+volatile unsigned int      delay = 8;
 n_io_handle_t     twi_handle = NULL;
 n_wifi_t          wifi_handle = NULL;
+
+char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize);
 
 pin_t atopin(const char *pin)
 {
@@ -125,20 +116,13 @@ int getPin(pin_t pin)
 
 void freePlants()
 {
-    int idx = 0;
-    for(idx = 0; idx < noOfPlants; ++idx)
-    {
-        free(plants[idx].records);
-    }
-
     free(plants);
+    plants = NULL;
 }
 
 /*
  * Configure from string, params are comma seperated
- * timestamp
  * delay
- * ledPin
  * noOfPlants
  * for each plants
  *     forwardPin
@@ -146,33 +130,30 @@ void freePlants()
  *     adcPin
  */
 
-void reconfigure(const char *string)
+void configure()
 {
-    string = strdup(string);
-    char *curptr = (char *) string;
+    char *curptr = NULL;
     char *nextptr = NULL;
     int idx = 0;
+    char uri[30];
+    char *response = NULL;
+    size_t retsize = 0;
+    snprintf(uri, sizeof(uri), "/api/devices/%" PRIu32 "/config", (uint32_t) DEVICEID);
 
-    freePlants();
-    N_DEBUG("Initializing with %s\r\n", string);
-    if((nextptr = strchr(curptr, ',')) != NULL)
+    response = doHTTP(uri, NULL, 0, &retsize);
+    if(response == NULL)
     {
-        *nextptr = '\0';
-        timestamp = strtoul(curptr, NULL, 0);
-        curptr = nextptr + 1;
+        return;
     }
+
+    N_DEBUG("Initializing with %s\r\n", response);
+    curptr = response;
+    freePlants();
 
     if((nextptr = strchr(curptr, ',')) != NULL)
     {
         *nextptr = '\0';
         delay = atoi(curptr);
-        curptr = nextptr + 1;
-    }
-
-    if((nextptr = strchr(curptr, ',')) != NULL)
-    {
-        *nextptr = '\0';
-        ledPin = atopin(curptr);
         curptr = nextptr + 1;
     }
 
@@ -193,14 +174,21 @@ void reconfigure(const char *string)
         if((nextptr = strchr(curptr, ',')) != NULL)
         {
             *nextptr = '\0';
-            plants[idx].config.forwardPin = atopin(curptr);
+            plants[idx].index = atol(curptr);
             curptr = nextptr + 1;
         }
 
         if((nextptr = strchr(curptr, ',')) != NULL)
         {
             *nextptr = '\0';
-            plants[idx].config.reversePin = atopin(curptr);
+            plants[idx].forwardPin = atopin(curptr);
+            curptr = nextptr + 1;
+        }
+
+        if((nextptr = strchr(curptr, ',')) != NULL)
+        {
+            *nextptr = '\0';
+            plants[idx].reversePin = atopin(curptr);
             curptr = nextptr + 1;
         }
 
@@ -210,7 +198,7 @@ void reconfigure(const char *string)
             *nextptr = '\0';
         }
 
-        plants[idx].config.adcPin = atopin(curptr);
+        plants[idx].adcPin = atopin(curptr);
 
         if(nextptr != NULL)
         {
@@ -220,22 +208,25 @@ void reconfigure(const char *string)
 
     N_DEBUG("DONE");
 
-    free((char *)string);
+    free(response);
 }
 
-void doPost(const char *data, size_t size)
+char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
 {
     N_DEBUG("Trying to connect");
     char len[10];
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
+    char *retval = NULL;
+    size_t retlen = 0, alloc_size = 30;
+    char ch = 0;
 
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, 80, 100);
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, PORT, 100);
     if(tcp == NULL)
     {
         N_DEBUG("Unable to open connection");
-        return;
+        return NULL;
     }
 
     N_DEBUG("ESP8266 connecting");
@@ -245,90 +236,127 @@ void doPost(const char *data, size_t size)
     {
         N_DEBUG("Unable to allocate request");
         n_io_close(tcp);
-        return;
+        return NULL;
     }
 
-    n_http_request_set_uri(request, "/record.php");
-    n_http_request_set_method(request, "POST");
+    n_http_request_set_uri(request, uri);
+    n_http_request_set_method(request, size ? "POST" : "GET");
     n_http_set_header(request, "Host", HOSTNAME);
-    n_http_set_header(request, "Connection", "close");
-    n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
-    snprintf(len, sizeof(len), "%d", (int)size);
-    n_http_set_header(request, "Content-Length", len);
+    if(size)
+    {
+        snprintf(len, sizeof(len), "%d", (int) size);
+        n_http_set_header(request, "Content-Length", len);
+        n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
+    }
+
+    n_http_set_header(request, "X-ApiKey", APIKEY);
 
     n_http_request_write_to_stream(request, tcp);
 
     n_http_free_object(request);
 
-    n_io_write(tcp, data, size);
+    if(size)
+    {
+        n_io_write(tcp, data, size);
+    }
+
+    n_io_flush(tcp);
     N_DEBUG("ESP8266 sent");
 
     response = n_http_new_response();
     if(response == NULL)
     {
         n_io_close(tcp);
-        return;
+        return NULL;
     }
 
-    n_http_set_header(response, "Content-Length", "0");
+    N_DEBUG("ESP8266 reading response");
     n_http_response_read_from_stream(response, tcp);
-    N_DEBUG("Content size: %d", atoi(n_http_get_header(response, "Content-Length")));
+    N_DEBUG("Response value: %d", n_http_response_get_status(response));
+    if(n_http_response_get_status(response) == 200)
+    {
+
+        retval = (char *) malloc(alloc_size);
+        if(retval)
+        {
+            while((ch = n_io_getch(tcp)) != -1)
+            {
+                if(retlen + 1 == alloc_size)
+                {
+                    char *newblock = (char *)realloc(retval, alloc_size + 10);
+                    if(newblock == NULL)
+                    {
+                        break;
+                    }
+
+                    retval = newblock;
+                    alloc_size += 10;
+                }
+
+                retval[retlen++] = ch;
+            }
+
+            retval[retlen] = '\0';
+        }
+    }
+
     n_http_free_object(response);
     n_io_close(tcp);
     N_DEBUG("ESP8266 closed");
+    if(retsize)
+    {
+        *retsize = retlen;
+    }
+
+    if(retval)
+    {
+        N_DEBUG("Returning %d", (int)retlen);
+    }
+    return retval;
 }
 
-void waterPlant(int idx)
+char *recordPlant(uint32_t idx, int val, int flip)
 {
     char data[30];
-    snprintf(data, sizeof(data), "i=%d", (int)idx);
-    doPost(data, strlen(data));
-}
-
-void recordPlant(int idx, int val, int flip)
-{
-    char data[30];
-    snprintf(data, sizeof(data), "i=%d&v=%d&f=%d", (int)idx, (int)val, (int)flip);
-    doPost(data, strlen(data));
+    char uri[30];
+    snprintf(uri, sizeof(uri), "/api/devices/%" PRIu32 "/execute", (uint32_t)DEVICEID);
+    snprintf(data, sizeof(data), "i=%" PRIu32 "&v=%d&f=%d", idx, val, flip);
+    return doHTTP(uri, data, strlen(data), NULL);
 }
 
 void processPlant(int idx)
 {
     int val = 0;
-    setDirection(plants[idx].config.forwardPin, 1);
-    setDirection(plants[idx].config.reversePin, 1);
+    char *response = NULL;
+    setDirection(plants[idx].forwardPin, 1);
+    setDirection(plants[idx].reversePin, 1);
     if(flip)
     {
-        setPin(plants[idx].config.forwardPin, 1);
-        setPin(plants[idx].config.reversePin, 0);
-        val = n_adc_read(plants[idx].config.adcPin);
-        if(val < 512)
-        {
-            waterPlant(idx);
-        }
+        setPin(plants[idx].forwardPin, 1);
+        setPin(plants[idx].reversePin, 0);
+        val = n_adc_read(plants[idx].adcPin);
     }
     else
     {
-        setPin(plants[idx].config.reversePin, 1);
-        setPin(plants[idx].config.forwardPin, 0);
-        val = n_adc_read(plants[idx].config.adcPin);
-        if(val > 512)
-        {
-            waterPlant(idx);
-        }
+        setPin(plants[idx].reversePin, 1);
+        setPin(plants[idx].forwardPin, 0);
+        val = n_adc_read(plants[idx].adcPin);
     }
 
-    recordPlant(idx, val, flip);
+    response = recordPlant(plants[idx].index, val, flip);
+    if(response)
+    {
+        free(response);
+    }
 
-    setPin(plants[idx].config.forwardPin, 0);
-    setPin(plants[idx].config.reversePin, 0);
+    setPin(plants[idx].forwardPin, 0);
+    setPin(plants[idx].reversePin, 0);
 }
 
 void process()
 {
     int idx = 0;
 
-    counter++;
     n_adc_set_ref(N_ADC_AVCC);
     n_adc_enable(200E3);
 
@@ -340,33 +368,13 @@ void process()
     flip = !flip;
 }
 
-void dumpInfo()
-{
-    int idx = 0;
-    int ridx = 0;
-    cli();
-
-    N_DEBUG("Plants %lu %d\r\n", timestamp, noOfPlants);
-    for(idx = 0; idx < noOfPlants; ++idx)
-    {
-        N_DEBUG("Plant %d %d\r\n", idx, plants[idx].noOfRecords);
-        for(ridx = 0; ridx < plants[idx].noOfRecords; ++ridx)
-        {
-            N_DEBUG("%lu", ((uint32_t) plants[idx].records[ridx].time * delay) + timestamp);
-        }
-    }
-
-    N_DEBUG("DONE");
-    sei();
-}
-
 volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
 
 void enable_esp()
 {
     N_DEBUG("ESP Enabled");
-    setDirection(ledPin, 1);
-    setPin(ledPin, 1);
+    setDirection(esp8266pin, 1);
+    setPin(esp8266pin, 1);
 
     n_delay_loop(5000);
 
@@ -396,17 +404,18 @@ void enable_esp()
 
     N_DEBUG("ESP8266 connected");
 
+#if !WIFI_DHCP
     n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
-
     N_DEBUG("ESP8266 network setup done");
+#endif
 }
 
 void disable_esp()
 {
     n_wifi_close(wifi_handle);
     n_io_close(usart_handle);
-    setDirection(ledPin, 1);
-    setPin(ledPin, 0);
+    setDirection(esp8266pin, 1);
+    setPin(esp8266pin, 0);
     N_DEBUG("ESP Disabled");
 }
 
@@ -422,11 +431,12 @@ int main()
 
     n_delay_init(F_CPU);
 
-    reconfigure(CONFIG_STR);
+    esp8266pin = atopin(ESP8266_PIN);
 
     while(1)
     {
         enable_esp();
+        configure();
         process();
         disable_esp();
         power_all_disable();
