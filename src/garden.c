@@ -141,7 +141,7 @@ void configure()
     snprintf(uri, sizeof(uri), "/api/devices/%" PRIu32 "/config", (uint32_t) DEVICEID);
 
     response = doHTTP(uri, NULL, 0, &retsize);
-    if(response == NULL)
+    if((response == NULL) || (strcmp(response, "") == 0))
     {
         return;
     }
@@ -215,14 +215,16 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
 {
     N_DEBUG("Trying to connect");
     char len[10];
+    char hostname[30];
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
     char *retval = NULL;
     size_t retlen = 0, alloc_size = 30;
     char ch = 0;
+    char chunked = 0;
 
-    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, PORT, 100);
+    tcp = n_wifi_open_io(wifi_handle, N_WIFI_IO_TYPE_TCP, HOSTNAME, PORT, 50);
     if(tcp == NULL)
     {
         N_DEBUG("Unable to open connection");
@@ -241,7 +243,8 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
 
     n_http_request_set_uri(request, uri);
     n_http_request_set_method(request, size ? "POST" : "GET");
-    n_http_set_header(request, "Host", HOSTNAME);
+    snprintf(hostname, sizeof(hostname), "%s", HOSTNAME);
+    n_http_set_header(request, "Host", hostname);
     if(size)
     {
         snprintf(len, sizeof(len), "%d", (int) size);
@@ -249,6 +252,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
         n_http_set_header(request, "Content-Type", "application/x-www-form-urlencoded");
     }
 
+    n_http_set_header(request, "Connection", "Close");
     n_http_set_header(request, "X-ApiKey", APIKEY);
 
     n_http_request_write_to_stream(request, tcp);
@@ -271,16 +275,43 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
     }
 
     N_DEBUG("ESP8266 reading response");
+
+    n_http_set_header(response, "Transfer-Encoding", NULL);
     n_http_response_read_from_stream(response, tcp);
     N_DEBUG("Response value: %d", n_http_response_get_status(response));
+
+    if(strstr(n_http_get_header(response, "Transfer-Encoding"), "chunked") != NULL)
+    {
+        N_DEBUG("Chunked data");
+        chunked = 1;
+    }
+
     if(n_http_response_get_status(response) == 200)
     {
-
         retval = (char *) malloc(alloc_size);
         if(retval)
         {
-            while((ch = n_io_getch(tcp)) != -1)
+            unsigned long toread = 0;
+            while(1)
             {
+                if(chunked && (toread == 0))
+                {
+                    char line[10];
+                    do
+                    {
+                        n_io_readline(tcp, line, sizeof(line));
+                    } while(line[0] == '\r');
+
+                    toread = strtoul(line, NULL, 16);
+                    if(toread == 0)
+                    {
+                        n_io_readline(tcp, line, sizeof(line));
+                        break;
+                    }
+                }
+
+                if((ch = n_io_getch(tcp)) == -1) break;
+
                 if(retlen + 1 == alloc_size)
                 {
                     char *newblock = (char *)realloc(retval, alloc_size + 10);
@@ -293,6 +324,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
                     alloc_size += 10;
                 }
 
+                --toread;
                 retval[retlen++] = ch;
             }
 
@@ -318,10 +350,33 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
 char *recordPlant(uint32_t idx, int val, int flip)
 {
     char data[30];
-    char uri[30];
+    char uri[40];
     snprintf(uri, sizeof(uri), "/api/devices/%" PRIu32 "/execute", (uint32_t)DEVICEID);
     snprintf(data, sizeof(data), "i=%" PRIu32 "&v=%d&f=%d", idx, val, flip);
     return doHTTP(uri, data, strlen(data), NULL);
+}
+
+void water(int seconds, pin_t forward, pin_t reverse, int motor_time)
+{
+    N_DEBUG("Watering for %d %d", seconds, motor_time);
+    if(seconds == 0)
+        return;
+
+    setDirection(forward, 1);
+    setDirection(reverse, 1);
+    setPin(forward, 1);
+    setPin(reverse, 0);
+    n_delay_wait(motor_time, N_DELAY_IDLE);
+    setPin(forward, 0);
+    setPin(reverse, 0);
+
+    n_delay_wait(seconds, N_DELAY_IDLE);
+
+    setPin(forward, 0);
+    setPin(reverse, 1);
+    n_delay_wait(motor_time, N_DELAY_IDLE);
+    setPin(forward, 0);
+    setPin(reverse, 0);
 }
 
 void processPlant(int idx)
@@ -344,7 +399,40 @@ void processPlant(int idx)
     }
 
     response = recordPlant(plants[idx].index, val, flip);
-    if(response)
+    if((response != NULL) && (strcmp(response, "") != 0))
+    {
+        char *curptr = response;
+        char *nextptr = NULL;
+        int motor_time;
+        pin_t forward_pin;
+        pin_t reverse_pin;
+        int wateringSeconds = 0;
+        if((nextptr = strchr(curptr, ',')) != NULL)
+        {
+            *nextptr = '\0';
+            forward_pin = atopin(curptr);
+            curptr = nextptr + 1;
+        }
+
+        if((nextptr = strchr(curptr, ',')) != NULL)
+        {
+            *nextptr = '\0';
+            reverse_pin = atopin(curptr);
+            curptr = nextptr + 1;
+        }
+
+        if((nextptr = strchr(curptr, ',')) != NULL)
+        {
+            *nextptr = '\0';
+            motor_time = atoi(curptr);
+            curptr = nextptr + 1;
+        }
+
+        wateringSeconds = atoi(curptr);
+        water(wateringSeconds, forward_pin, reverse_pin, motor_time);
+    }
+
+    if(response != NULL)
     {
         free(response);
     }
@@ -386,23 +474,13 @@ void enable_esp()
 
     wifi_handle = n_esp8266_open_wifi(usart_handle);
 
-    N_DEBUG("ESP8266 enabled");
-
     n_wifi_restart(wifi_handle);
-
-    N_DEBUG("ESP8266 restarted");
 
     n_wifi_status(wifi_handle);
 
-    N_DEBUG("ESP8266 status ok");
-
     n_wifi_set_mode(wifi_handle, N_WIFI_MODE_STA);
 
-    N_DEBUG("ESP8266 station mode set");
-
     n_wifi_connect(wifi_handle, WIFI_SSID, WIFI_PASSWORD);
-
-    N_DEBUG("ESP8266 connected");
 
 #if !WIFI_DHCP
     n_wifi_set_network(wifi_handle, WIFI_IP, WIFI_GATEWAY, WIFI_NETMASK);
