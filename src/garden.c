@@ -356,9 +356,8 @@ char *recordPlant(uint32_t idx, int val, int flip)
     return doHTTP(uri, data, strlen(data), NULL);
 }
 
-void water(int seconds, pin_t forward, pin_t reverse, int motor_time)
+void water(int seconds, pin_t forward, pin_t reverse)
 {
-    N_DEBUG("Watering for %d %d", seconds, motor_time);
     if(seconds == 0)
         return;
 
@@ -366,15 +365,9 @@ void water(int seconds, pin_t forward, pin_t reverse, int motor_time)
     setDirection(reverse, 1);
     setPin(forward, 1);
     setPin(reverse, 0);
-    n_delay_wait(motor_time, N_DELAY_IDLE);
-    setPin(forward, 0);
-    setPin(reverse, 0);
 
     n_delay_wait(seconds, N_DELAY_IDLE);
 
-    setPin(forward, 0);
-    setPin(reverse, 1);
-    n_delay_wait(motor_time, N_DELAY_IDLE);
     setPin(forward, 0);
     setPin(reverse, 0);
 }
@@ -403,7 +396,6 @@ void processPlant(int idx)
     {
         char *curptr = response;
         char *nextptr = NULL;
-        int motor_time;
         pin_t forward_pin;
         pin_t reverse_pin;
         int wateringSeconds = 0;
@@ -421,15 +413,8 @@ void processPlant(int idx)
             curptr = nextptr + 1;
         }
 
-        if((nextptr = strchr(curptr, ',')) != NULL)
-        {
-            *nextptr = '\0';
-            motor_time = atoi(curptr);
-            curptr = nextptr + 1;
-        }
-
         wateringSeconds = atoi(curptr);
-        water(wateringSeconds, forward_pin, reverse_pin, motor_time);
+        water(wateringSeconds, forward_pin, reverse_pin);
     }
 
     if(response != NULL)
@@ -461,6 +446,7 @@ volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
 void enable_esp()
 {
     N_DEBUG("ESP Enabled");
+
     setDirection(esp8266pin, 1);
     setPin(esp8266pin, 1);
 
@@ -499,6 +485,19 @@ void disable_esp()
 
 int main()
 {
+    char pinstr[3];
+    int i;
+    pinstr[0] = 'D';
+    pinstr[2] = '\0';
+    for(i = 2; i <= 7; i++)
+    {
+        pin_t pin;
+        pinstr[1] = '0' + i;
+        pin = atopin(pinstr);
+        setDirection(pin, 1);
+        setPin(pin, 0);
+    }
+
     twi_handle = n_twi_new_master_io(0x04, F_CPU, 100000);
     if(twi_handle != NULL)
     {
