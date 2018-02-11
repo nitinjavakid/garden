@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <avr/power.h>
 #include <avr/interrupt.h>
+#include <avr/wdt.h>
 #include <util/delay.h>
 #include <wifi.h>
 #include <esp8266.h>
@@ -445,15 +446,15 @@ volatile n_io_handle_t tcp = NULL, usart_handle = NULL;
 
 void enable_esp()
 {
-    N_DEBUG("ESP Enabled");
-
     setDirection(esp8266pin, 1);
     setPin(esp8266pin, 1);
 
+    N_DEBUG("ESP Enabled");
     n_delay_loop(5000);
 
     n_usart_enable(N_USART_MODE_ASYNC, N_USART_8BIT, N_USART_PARITY_NONE, N_USART_STOPBIT1, 9600);
 
+    N_DEBUG("Starting usart");
     usart_handle = n_usart_new_io(100);
 
     N_DEBUG("UART enabled");
@@ -481,6 +482,15 @@ void disable_esp()
     setDirection(esp8266pin, 1);
     setPin(esp8266pin, 0);
     N_DEBUG("ESP Disabled");
+}
+
+uint8_t mcusr_mirror __attribute__ ((section (".noinit")));
+void get_mcusr(void) __attribute__((naked)) __attribute__((section(".init3")));
+void get_mcusr(void)
+{
+    mcusr_mirror = MCUSR;
+    MCUSR = 0;
+    wdt_disable();
 }
 
 int main()
