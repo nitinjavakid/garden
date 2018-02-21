@@ -217,6 +217,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
     N_DEBUG("Trying to connect");
     char len[10];
     char hostname[30];
+    enable_esp();
     n_io_handle_t tcp = NULL;
     n_http_request_t request = NULL;
     n_http_response_t response = NULL;
@@ -229,6 +230,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
     if(tcp == NULL)
     {
         N_DEBUG("Unable to open connection");
+        disable_esp();
         return NULL;
     }
 
@@ -239,6 +241,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
     {
         N_DEBUG("Unable to allocate request");
         n_io_close(tcp);
+        disable_esp();
         return NULL;
     }
 
@@ -345,6 +348,7 @@ char *doHTTP(const char *uri, const char *data, size_t size, size_t *retsize)
     {
         N_DEBUG("Returning %d", (int)retlen);
     }
+    disable_esp();
     return retval;
 }
 
@@ -522,10 +526,8 @@ int main()
 
     while(1)
     {
-        enable_esp();
         configure();
         process();
-        disable_esp();
         power_all_disable();
         n_delay_wait(delay, N_DELAY_POWER_DOWN);
         power_all_enable();
