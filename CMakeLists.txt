@@ -29,14 +29,14 @@ set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 
 include_directories("${NLIB_PATH}/include")
 
-set(NLIB_MODULES "adc" "usart" "delay" "twi" "memory" "wifi" "esp8266" "debug" "http" "io")
+set(NLIB_MODULES "delay")
 
 file(GLOB SRCS "src/*.c")
 
 add_executable(${PROJECT_NAME} ${SRCS})
 
 foreach(module ${NLIB_MODULES})
-  target_link_libraries(${PROJECT_NAME} "${NLIB_PATH}/lib/lib${module}.${MCU}.a")
+  target_link_libraries(${PROJECT_NAME} "${NLIB_PATH}/build/lib${module}.${MCU}.a")
 endforeach()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${PROJECT_NAME}.elf")
